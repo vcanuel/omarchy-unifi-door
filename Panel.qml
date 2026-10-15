@@ -21,6 +21,7 @@ Panel {
   readonly property string profile: String(setting("profile", "default"))
   readonly property string wantedCamera: String(setting("camera", ""))
   readonly property string wantedDoor: String(setting("door", ""))
+  readonly property string wantedSensor: String(setting("sensor", ""))
   readonly property int refreshIntervalSec: Math.max(1, Math.min(60, parseInt(setting("refreshIntervalSec", 3), 10) || 3))
 
   readonly property string helperPath: decodeURIComponent(String(Qt.resolvedUrl("bin/unifi-door")).replace(/^file:\/\//, ""))
@@ -41,7 +42,10 @@ Panel {
   property bool armed: false
   property string doorFlash: ""
   readonly property bool doorNeedsSetup: !!doorError && (doorError.kind === "unconfigured" || doorError.kind === "auth")
-  readonly property string icon: "󰠚"
+  // Protect contact sensor on the door (open/closed), through the cloud too.
+  property var sensor: null
+  readonly property bool doorOpen: !!sensor && sensor.isOpened
+  readonly property string icon: doorOpen ? "󰠜" : "󰠚"
 
   function helper(args) {
     return [helperPath, "--profile", profile].concat(args)
@@ -84,10 +88,22 @@ Panel {
     close()
   }
 
+  function refreshSensor() {
+    if (sensorProcess.running) return
+    sensorProcess.command = helper(["sensor", "--sensor", wantedSensor])
+    sensorProcess.running = true
+  }
+
+  function positionText() {
+    if (sensor) return sensor.isOpened ? "open" : "closed"
+    return door ? door.position : ""
+  }
+
   function doorStateText() {
-    if (!door) return ""
-    var parts = [door.locked ? "Locked" : "Unlocked"]
-    if (door.position !== "") parts.push(door.position)
+    var parts = []
+    if (door) parts.push(door.locked ? "Locked" : "Unlocked")
+    var position = positionText()
+    if (position !== "") parts.push(parts.length ? position : position.charAt(0).toUpperCase() + position.slice(1))
     return parts.join(" · ")
   }
 
@@ -95,7 +111,11 @@ Panel {
     if (doorFlash !== "") return doorFlash
     if (doorError) {
       if (doorNeedsSetup) return "Press a to connect to UniFi Access"
-      if (doorError.kind === "unreachable" || doorError.kind === "tls") return "Not reachable: on the office network or VPN?"
+      if (doorError.kind === "unreachable" || doorError.kind === "tls") {
+        var position = positionText()
+        return (position !== "" ? position.charAt(0).toUpperCase() + position.slice(1) + " · " : "")
+          + "unlock needs the office network or VPN"
+      }
       return doorError.message
     }
     return door ? doorStateText() : "Checking…"
@@ -127,7 +147,8 @@ Panel {
   onWantedCameraChanged: { camera = null; if (opened) findCamera() }
   onWantedDoorChanged: { door = null; if (opened) refreshDoor() }
   onProfileChanged: { camera = null; if (opened) findCamera() }
-  onOpenedChanged: if (opened) { nowMs = Date.now(); takePicture(); refreshDoor() } else { armed = false }
+  onOpenedChanged: if (opened) { nowMs = Date.now(); takePicture(); refreshDoor(); refreshSensor() } else { armed = false }
+  onWantedSensorChanged: { sensor = null; refreshSensor() }
 
   IpcHandler {
     target: root.ipcTarget
@@ -137,11 +158,12 @@ Panel {
     function refresh(): string {
       root.error = null; root.camera = null; root.findCamera()
       root.doorError = null; root.refreshDoor()
+      root.refreshSensor()
       return "ok"
     }
     function status(): string {
       return JSON.stringify({ opened: root.opened, camera: root.camera, via: root.via, error: root.error,
-        door: root.door, doorError: root.doorError, armed: root.armed,
+        door: root.door, doorError: root.doorError, armed: root.armed, sensor: root.sensor,
         finding: cameraProcess.running, fetching: snapshotProcess.running, frame: root.frame })
     }
   }
@@ -187,6 +209,27 @@ Panel {
     }
   }
 
+  // A sensor that fails to answer keeps its last state rather than blanking
+  // the line; Protect being unreachable already shows on the picture.
+  Process {
+    id: sensorProcess
+    stdout: StdioCollector { id: sensorOut; waitForEnd: true }
+    onExited: {
+      var result = root.parse(sensorOut.text)
+      if (result && result.ok) root.sensor = result.sensor
+    }
+  }
+
+  // The bar icon shows an open door, so the sensor is also read while the
+  // panel is closed, slowly: one small JSON request every 30 seconds.
+  Timer {
+    interval: root.opened ? root.refreshIntervalSec * 1000 : 30000
+    repeat: true
+    running: true
+    triggeredOnStart: true
+    onTriggered: root.refreshSensor()
+  }
+
   Process {
     id: unlockProcess
     stdout: StdioCollector { id: unlockOut; waitForEnd: true }
@@ -229,7 +272,8 @@ Panel {
     bar: root.bar
     text: root.icon
     foreground: root.needsSetup ? root.urgent : root.foreground
-    tooltipText: root.opened ? "" : (root.needsSetup ? "UniFi Door: set up" : (root.camera ? root.camera.name : "Door camera"))
+    tooltipText: root.opened ? "" : (root.needsSetup ? "UniFi Door: set up"
+      : (root.sensor ? "Door " + (root.sensor.isOpened ? "open" : "closed") : (root.camera ? root.camera.name : "Door camera")))
     onPressed: function(buttonCode) { root.handlePress(buttonCode) }
   }
 

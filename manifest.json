@@ -22,7 +22,8 @@
       "profile": "default",
       "camera": "",
       "refreshIntervalSec": 3,
-      "door": ""
+      "door": "",
+      "sensor": ""
     },
     "schema": [
       {
@@ -41,6 +42,12 @@
         "key": "door",
         "type": "string",
         "label": "Door name or id in UniFi Access (empty: the first door wired to a hub)",
+        "defaultValue": ""
+      },
+      {
+        "key": "sensor",
+        "type": "string",
+        "label": "Door contact sensor in UniFi Protect, name or id (empty: the first one mounted on a door)",
         "defaultValue": ""
       },
       {

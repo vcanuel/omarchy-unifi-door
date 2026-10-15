@@ -58,6 +58,17 @@ def cmd_camera(args):
     return 0
 
 
+def cmd_sensor(args):
+    """The door contact sensor, if Protect has one: open or closed."""
+    _, endpoint, transport = unifi_cli._connect_or_fail(args.profile)
+    sensors = protect.list_sensors(transport, endpoint)
+    sensor = protect.choose_sensor(sensors, args.sensor)
+    if args.sensor and not sensor:
+        raise UnifiError("http", "no sensor named '%s'" % args.sensor)
+    _print({"ok": True, "sensor": sensor})
+    return 0
+
+
 def cmd_snapshot(args):
     _, endpoint, transport = unifi_cli._connect_or_fail(args.profile)
     started = time.time()
@@ -151,6 +162,10 @@ def main(argv=None):
     camera = sub.add_parser("camera", help="print the camera to show and the ones available")
     camera.add_argument("--camera", default="", help="camera name or id (default: the door camera)")
     camera.set_defaults(func=cmd_camera)
+
+    sensor = sub.add_parser("sensor", help="print the door contact sensor (UniFi Protect), if any")
+    sensor.add_argument("--sensor", default="", help="sensor name or id (default: the first door contact sensor)")
+    sensor.set_defaults(func=cmd_sensor)
 
     snapshot = sub.add_parser("snapshot", help="save the camera's current picture and print its path")
     snapshot.add_argument("--camera", required=True, help="camera id")

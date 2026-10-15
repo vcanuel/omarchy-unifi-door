@@ -6,6 +6,11 @@ Entry, a doorbell, an intercom…), refreshed every few seconds while the panel
 is open, with the UniFi Access door below it: locked or not, open or closed,
 and an **Open** button.
 
+Open or closed comes from a UniFi Protect contact sensor on the door (a
+SuperLink USL Entry, an UP-Sense…) when there is one, otherwise from the
+Access hub's door position input. The sensor is read through the cloud too,
+so the bar icon turns into an open door wherever you are.
+
 ## Install
 
 ```bash
@@ -52,7 +57,9 @@ working either way.
   up Access, **Esc** closes.
 - Settings: `camera` picks a camera by name or id (empty means the first door
   camera: Entry, Doorbell or Intercom models), `door` picks the Access door
-  (empty means the first one wired to a hub), and `refreshIntervalSec` sets
+  (empty means the first one wired to a hub), `sensor` picks the Protect
+  contact sensor (empty means the first one mounted on a door), and
+  `refreshIntervalSec` sets
   how often the picture and the door's state refresh while the panel is open.
 
 Pictures are fetched only while the panel is open, one at a time, and kept in

@@ -66,3 +66,41 @@ def list_cameras(transport, endpoint):
 def fetch_snapshot(transport, endpoint, camera_id):
     path = "%s/cameras/%s/snapshot" % (protect_prefix(endpoint), camera_id)
     return transport.get_bytes(path, "image/jpeg")
+
+
+# A Protect contact sensor (UP-Sense, SuperLink USL Entry…) mounted on a door
+# tells whether it is open, independently of Access, and through the cloud.
+def normalize_sensor(raw):
+    battery = raw.get("batteryStatus") or {}
+    return {
+        "id": str(raw.get("id") or ""),
+        "name": str(raw.get("name") or raw.get("type") or "Sensor"),
+        "model": str(raw.get("type") or ""),
+        "connected": raw.get("state") == "CONNECTED",
+        "mountType": str(raw.get("mountType") or ""),
+        "hasContact": "open" in (raw.get("featureFlags") or {}),
+        "isOpened": bool(raw.get("isOpened")),
+        "openChangedAt": raw.get("openStatusChangedAt"),
+        "battery": battery.get("percentage"),
+        "batteryLow": bool(battery.get("isLow")),
+    }
+
+
+def choose_sensor(sensors, wanted=""):
+    """The sensor named or id'd by `wanted`, else the first door contact sensor, else none."""
+    wanted = str(wanted or "").strip().lower()
+    ordered = sorted(sensors, key=lambda s: not s["connected"])
+    if wanted:
+        for sensor in ordered:
+            if wanted in (sensor["id"].lower(), sensor["name"].lower()):
+                return sensor
+        return None
+    for sensor in ordered:
+        if sensor["hasContact"] and sensor["mountType"] in ("door", "garage"):
+            return sensor
+    return None
+
+
+def list_sensors(transport, endpoint):
+    raw = transport.get_json(protect_prefix(endpoint) + "/sensors") or []
+    return [normalize_sensor(s) for s in raw if isinstance(s, dict)]

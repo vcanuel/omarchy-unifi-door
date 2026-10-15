@@ -53,5 +53,37 @@ class NormalizeCamera(unittest.TestCase):
                                                          "connected": True, "hasSpeaker": True, "hasPackageCamera": True})
 
 
+def raw_sensor(id, name, mount="door", opened=False, contact=True, state="CONNECTED"):
+    flags = {"open": {"channelCount": 1}} if contact else {}
+    return {"id": id, "name": name, "type": "USL-Entry-EU", "state": state, "mountType": mount,
+            "featureFlags": flags, "isOpened": opened, "openStatusChangedAt": 1792063070313,
+            "batteryStatus": {"percentage": 100, "isLow": False}}
+
+
+class Sensors(unittest.TestCase):
+    def test_normalize(self):
+        sensor = protect.normalize_sensor(raw_sensor("s1", "USL Entry", opened=True))
+        self.assertEqual(sensor["isOpened"], True)
+        self.assertEqual(sensor["mountType"], "door")
+        self.assertTrue(sensor["hasContact"])
+        self.assertEqual(sensor["battery"], 100)
+
+    def test_door_contact_by_default(self):
+        sensors = [protect.normalize_sensor(raw_sensor("w", "Window", mount="window")),
+                   protect.normalize_sensor(raw_sensor("m", "Motion", contact=False)),
+                   protect.normalize_sensor(raw_sensor("d", "USL Entry"))]
+        self.assertEqual(protect.choose_sensor(sensors)["id"], "d")
+
+    def test_none_without_door_sensor(self):
+        sensors = [protect.normalize_sensor(raw_sensor("w", "Window", mount="window"))]
+        self.assertIsNone(protect.choose_sensor(sensors))
+        self.assertIsNone(protect.choose_sensor([]))
+
+    def test_by_name(self):
+        sensors = [protect.normalize_sensor(raw_sensor("w", "Window", mount="window"))]
+        self.assertEqual(protect.choose_sensor(sensors, "window")["id"], "w")
+        self.assertIsNone(protect.choose_sensor(sensors, "nope"))
+
+
 if __name__ == "__main__":
     unittest.main()
