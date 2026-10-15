@@ -1,6 +1,7 @@
 """`unifi-door`: the helper the bar widget runs. Every command prints one JSON object."""
 
 import argparse
+import getpass
 import json
 import os
 import sys
@@ -10,8 +11,9 @@ import time
 from unifi import cli as unifi_cli
 from unifi import config, connect
 from unifi.errors import UnifiError
+from unifi.transport import fetch_fingerprint, split_url
 
-from . import protect
+from . import access, protect
 
 
 def _print(data):
@@ -69,6 +71,73 @@ def cmd_snapshot(args):
     return 0
 
 
+def cmd_doors(args):
+    client = access.AccessClient.for_profile(args.profile)
+    doors = client.doors()
+    chosen = access.choose_door(doors, args.door)
+    if not chosen:
+        raise UnifiError("http", "no door named '%s'" % args.door if args.door else "no door in UniFi Access")
+    _print({"ok": True, "door": chosen, "doors": doors})
+    return 0
+
+
+def cmd_unlock(args):
+    # Only ever run on an explicit request from the user (the panel asks for
+    # a second click). The relay locks again by itself after the delay set in
+    # Access.
+    client = access.AccessClient.for_profile(args.profile)
+    client.unlock(args.door)
+    _print({"ok": True, "door": args.door, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+    return 0
+
+
+ACCESS_HELP = """UniFi Access is reached on the console itself (port %d), not through the
+UniFi cloud: on the office network, or over a VPN to it.
+
+The token comes from UniFi Access → Settings → General → API Token.
+Give it only: Locations = Edit (to unlock), Device = View, System Log = View.""" % access.PORT
+
+
+def cmd_access_setup(args):
+    print(ACCESS_HELP + "\n")
+    try:
+        current = access.get_access(args.profile)
+    except UnifiError:
+        current = {}
+    host = split_url(current["url"])[0] if current.get("url") else "10.10.1.1"
+    host = unifi_cli._ask("Console address", host)
+    url = access.default_url(host) if "://" not in host else host.rstrip("/")
+
+    fingerprint = fetch_fingerprint(url)
+    print("\nUniFi Access answers with this certificate:\n  %s" % fingerprint)
+    if current.get("fingerprint") and current["fingerprint"] != fingerprint:
+        print("  ⚠ This differs from the previously pinned certificate.")
+    if not unifi_cli._confirm("Trust and pin it?"):
+        return 1
+
+    try:
+        access.read_token(args.profile)
+        keep = unifi_cli._confirm("Use the Access token already in the keyring?")
+    except UnifiError:
+        keep = False
+    if not keep:
+        token = getpass.getpass("UniFi Access API token (hidden): ").strip()
+        if not token:
+            return 1
+        access.store_token(args.profile, token)
+
+    client = access.AccessClient(url, access.read_token(args.profile), "pin", fingerprint)
+    doors = client.doors()
+    access.save_access(args.profile, url=url, tls="pin", fingerprint=fingerprint)
+    print("\nConnected. Doors:")
+    for door in doors:
+        state = "locked" if door["locked"] else "unlocked"
+        if door["position"]:
+            state += ", " + door["position"]
+        print("  • %s (%s)" % (door["fullName"] or door["name"], state))
+    return 0
+
+
 def cmd_setup(args):
     # Same profiles and keyring as the vcanuel.unifi plugin: one setup serves both.
     return unifi_cli.main(["--profile", args.profile, "setup"])
@@ -89,6 +158,17 @@ def main(argv=None):
 
     setup = sub.add_parser("setup", help="connect to a console (shared with the UniFi plugin)")
     setup.set_defaults(func=cmd_setup)
+
+    doors = sub.add_parser("doors", help="print the door to show and the ones available (UniFi Access)")
+    doors.add_argument("--door", default="", help="door name or id (default: the first one wired to a hub)")
+    doors.set_defaults(func=cmd_doors)
+
+    unlock = sub.add_parser("unlock", help="unlock a door now (UniFi Access)")
+    unlock.add_argument("--door", required=True, help="door id")
+    unlock.set_defaults(func=cmd_unlock)
+
+    access_setup = sub.add_parser("access-setup", help="connect to UniFi Access on the console (LAN or VPN)")
+    access_setup.set_defaults(func=cmd_access_setup)
 
     args = parser.parse_args(argv)
     try:

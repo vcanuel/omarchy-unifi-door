@@ -136,20 +136,8 @@ class Transport:
     # unifi-door: split out of get_json so camera snapshots (JPEG) share its
     # connection, pinning and error handling.
     def get_bytes(self, path, accept):
+        response, body = self.request("GET", path, {"X-API-KEY": self.api_key, "Accept": accept})
         path = self.base + path
-        conn = self._connect()
-        try:
-            conn.request("GET", path, headers={
-                "X-API-KEY": self.api_key,
-                "Accept": accept,
-            })
-            response = conn.getresponse()
-            body = response.read()
-        except (OSError, http.client.HTTPException) as exc:
-            raise UnifiError("unreachable", "request to %s failed (%s)" % (path, describe_network_error(exc)))
-        finally:
-            conn.close()
-
         if response.status in (401, 403):
             raise UnifiError("auth", "API key rejected by %s (HTTP %d)" % (self.host, response.status), response.status)
         if response.status == 429:
@@ -157,3 +145,19 @@ class Transport:
         if response.status >= 400:
             raise UnifiError("http", "%s returned HTTP %d" % (path, response.status), response.status)
         return body
+
+    # unifi-door: one request with the caller's headers and method, through the
+    # same pinned connection. UniFi Access authenticates with a bearer token
+    # rather than X-API-KEY, and unlocking is a PUT. Returns (response, body);
+    # status handling is the caller's.
+    def request(self, method, path, headers, body=None):
+        path = self.base + path
+        conn = self._connect()
+        try:
+            conn.request(method, path, body=body, headers=headers)
+            response = conn.getresponse()
+            return response, response.read()
+        except (OSError, http.client.HTTPException) as exc:
+            raise UnifiError("unreachable", "request to %s failed (%s)" % (path, describe_network_error(exc)))
+        finally:
+            conn.close()

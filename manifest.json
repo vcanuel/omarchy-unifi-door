@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "author": "Vincent Canuel",
   "license": "MIT",
-  "description": "See who is at the door: the UniFi Protect camera watching it, from the Omarchy bar.",
+  "description": "See who is at the door and let them in: the UniFi Protect camera watching it and the UniFi Access door, from the Omarchy bar.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,14 +14,15 @@
   },
   "barWidget": {
     "displayName": "UniFi Door",
-    "description": "The door camera's picture, refreshed while the panel is open.",
+    "description": "The door camera's picture, refreshed while the panel is open, and the door's state with an Open button.",
     "category": "Network",
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
       "profile": "default",
       "camera": "",
-      "refreshIntervalSec": 3
+      "refreshIntervalSec": 3,
+      "door": ""
     },
     "schema": [
       {
@@ -34,6 +35,12 @@
         "key": "camera",
         "type": "string",
         "label": "Camera name or id (empty: the door camera)",
+        "defaultValue": ""
+      },
+      {
+        "key": "door",
+        "type": "string",
+        "label": "Door name or id in UniFi Access (empty: the first door wired to a hub)",
         "defaultValue": ""
       },
       {
