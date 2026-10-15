@@ -10,14 +10,14 @@ from unifi.errors import UnifiError  # noqa: E402
 
 
 def raw_door(id, name, relay="lock", position="close", hub=True):
-    return {"id": id, "name": name, "full_name": "IDC / " + name, "door_lock_relay_status": relay,
+    return {"id": id, "name": name, "full_name": "Office / " + name, "door_lock_relay_status": relay,
             "door_position_status": position, "is_bind_hub": hub, "type": "door", "floor_id": "f"}
 
 
 class NormalizeDoor(unittest.TestCase):
     def test_locked_closed(self):
         door = access.normalize_door(raw_door("d1", "Porte"))
-        self.assertEqual(door, {"id": "d1", "name": "Porte", "fullName": "IDC / Porte", "locked": True,
+        self.assertEqual(door, {"id": "d1", "name": "Porte", "fullName": "Office / Porte", "locked": True,
                                 "position": "closed", "hasHub": True})
 
     def test_unlocked_open(self):
@@ -39,7 +39,7 @@ class ChooseDoor(unittest.TestCase):
     def test_by_name_id_or_full_name(self):
         self.assertEqual(access.choose_door(self.doors, "spare")["id"], "a")
         self.assertEqual(access.choose_door(self.doors, "B")["id"], "b")
-        self.assertEqual(access.choose_door(self.doors, "idc / porte")["id"], "b")
+        self.assertEqual(access.choose_door(self.doors, "office / porte")["id"], "b")
 
     def test_unknown(self):
         self.assertIsNone(access.choose_door(self.doors, "nope"))

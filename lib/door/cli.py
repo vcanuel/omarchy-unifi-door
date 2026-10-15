@@ -109,14 +109,25 @@ The token comes from UniFi Access → Settings → General → API Token.
 Give it only: Locations = Edit (to unlock), Device = View, System Log = View.""" % access.PORT
 
 
+def _profile_host(profile_name):
+    """The console's LAN address from the UniFi profile, when it has one."""
+    try:
+        url = config.get_profile(profile_name).get("url")
+        return split_url(url)[0] if url else ""
+    except UnifiError:
+        return ""
+
+
 def cmd_access_setup(args):
     print(ACCESS_HELP + "\n")
     try:
         current = access.get_access(args.profile)
     except UnifiError:
         current = {}
-    host = split_url(current["url"])[0] if current.get("url") else "10.10.1.1"
-    host = unifi_cli._ask("Console address", host)
+    default_host = split_url(current["url"])[0] if current.get("url") else _profile_host(args.profile)
+    host = ""
+    while not host:
+        host = unifi_cli._ask("Console address (its LAN IP, e.g. 192.168.1.1)", default_host)
     url = access.default_url(host) if "://" not in host else host.rstrip("/")
 
     fingerprint = fetch_fingerprint(url)
