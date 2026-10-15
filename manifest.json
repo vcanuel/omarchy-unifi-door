@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "id": "vcanuel.unifi-door",
+  "name": "UniFi Door",
+  "version": "0.1.0",
+  "author": "Vincent Canuel",
+  "license": "MIT",
+  "description": "See who is at the door: the UniFi Protect camera watching it, from the Omarchy bar.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "UniFi Door",
+    "description": "The door camera's picture, refreshed while the panel is open.",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "profile": "default",
+      "camera": "",
+      "refreshIntervalSec": 3
+    },
+    "schema": [
+      {
+        "key": "profile",
+        "type": "string",
+        "label": "Console profile (shared with the UniFi plugin)",
+        "defaultValue": "default"
+      },
+      {
+        "key": "camera",
+        "type": "string",
+        "label": "Camera name or id (empty: the door camera)",
+        "defaultValue": ""
+      },
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Picture refresh while open (seconds)",
+        "min": 1,
+        "max": 60,
+        "defaultValue": 3
+      }
+    ]
+  }
+}
