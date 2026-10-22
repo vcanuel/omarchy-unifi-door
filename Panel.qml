@@ -45,7 +45,12 @@ Panel {
   // Protect contact sensor on the door (open/closed), through the cloud too.
   property var sensor: null
   readonly property bool doorOpen: !!sensor && sensor.isOpened
-  readonly property string icon: doorOpen ? "󰠜" : "󰠚"
+  // The doorbell: Protect posts to an ntfy topic, a helper streams it here.
+  property double ringAtMs: 0
+  property var ringError: null
+  readonly property bool ringing: ringAtMs > 0
+  readonly property bool ringNeedsSetup: !!ringError && ringError.kind === "unconfigured"
+  readonly property string icon: ringing ? "󰂞" : (doorOpen ? "󰠜" : "󰠚")
 
   function helper(args) {
     return [helperPath, "--profile", profile].concat(args)
@@ -86,6 +91,42 @@ Panel {
       Util.shellQuote(helperPath) + " --profile " + Util.shellQuote(profile) + " access-setup"
       + "; rc=$?; omarchy-shell -q vcanuel.unifi-door refresh; (exit $rc)"])
     close()
+  }
+
+  function runRingSetup() {
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation",
+      Util.shellQuote(helperPath) + " --profile " + Util.shellQuote(profile) + " ring-setup"
+      + "; rc=$?; omarchy-shell -q vcanuel.unifi-door refresh; (exit $rc)"])
+    close()
+  }
+
+  function listenForRings() {
+    if (ringProcess.running) return
+    ringProcess.command = helper(["ring-listen"])
+    ringProcess.running = true
+  }
+
+  function handleRingLine(line) {
+    var result = parse(line)
+    if (!result) return
+    if (result.event === "listening") { ringError = null; return }
+    if (result.event === "error") { ringError = result.error; return }
+    if (result.event !== "ring") return
+    ringAtMs = Date.now()
+    ringClearTimer.restart()
+    // No picture in the toast: through the cloud it can take half a minute.
+    // Clicking opens the panel, which shows the camera live.
+    Quickshell.execDetached(["omarchy-notification-send", "--app-name", "UniFi Door", "-g", "󰂞", "-u", "critical",
+      "Someone is at the door", camera ? camera.name : "Doorbell",
+      "--exec", "omarchy-shell", "vcanuel.unifi-door", "open"])
+    if (opened) takePicture()
+  }
+
+  function ringText() {
+    if (ringNeedsSetup) return "Doorbell off · press b to hear it anywhere"
+    if (ringError) return "Doorbell: " + ringError.message
+    if (ringing) return "Rang " + Qt.formatTime(new Date(ringAtMs), "HH:mm")
+    return ringProcess.running ? "Doorbell on, anywhere" : "Doorbell…"
   }
 
   function refreshSensor() {
@@ -147,8 +188,9 @@ Panel {
   onWantedCameraChanged: { camera = null; if (opened) findCamera() }
   onWantedDoorChanged: { door = null; if (opened) refreshDoor() }
   onProfileChanged: { camera = null; if (opened) findCamera() }
-  onOpenedChanged: if (opened) { nowMs = Date.now(); takePicture(); refreshDoor(); refreshSensor() } else { armed = false }
+  onOpenedChanged: if (opened) { nowMs = Date.now(); takePicture(); refreshDoor(); refreshSensor() } else { armed = false; ringAtMs = 0 }
   onWantedSensorChanged: { sensor = null; refreshSensor() }
+  Component.onCompleted: listenForRings()
 
   IpcHandler {
     target: root.ipcTarget
@@ -159,11 +201,13 @@ Panel {
       root.error = null; root.camera = null; root.findCamera()
       root.doorError = null; root.refreshDoor()
       root.refreshSensor()
+      root.ringError = null; root.listenForRings()
       return "ok"
     }
     function status(): string {
       return JSON.stringify({ opened: root.opened, camera: root.camera, via: root.via, error: root.error,
         door: root.door, doorError: root.doorError, armed: root.armed, sensor: root.sensor,
+        ringing: root.ringing, ringError: root.ringError, listening: ringProcess.running,
         finding: cameraProcess.running, fetching: snapshotProcess.running, frame: root.frame })
     }
   }
@@ -230,6 +274,27 @@ Panel {
     onTriggered: root.refreshSensor()
   }
 
+  // Runs for as long as the shell does. If it dies (network gone, ntfy down)
+  // it comes back after a pause; an unconfigured doorbell waits for refresh.
+  Process {
+    id: ringProcess
+    stdout: SplitParser { onRead: function(line) { root.handleRingLine(line) } }
+    onExited: if (!root.ringNeedsSetup) ringRestartTimer.restart()
+  }
+
+  Timer {
+    id: ringRestartTimer
+    interval: 30000
+    onTriggered: root.listenForRings()
+  }
+
+  // The bar stays on the bell for a while, or until the panel is opened.
+  Timer {
+    id: ringClearTimer
+    interval: 120000
+    onTriggered: root.ringAtMs = 0
+  }
+
   Process {
     id: unlockProcess
     stdout: StdioCollector { id: unlockOut; waitForEnd: true }
@@ -271,8 +336,9 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     text: root.icon
-    foreground: root.needsSetup ? root.urgent : root.foreground
+    foreground: root.needsSetup || root.ringing ? root.urgent : root.foreground
     tooltipText: root.opened ? "" : (root.needsSetup ? "UniFi Door: set up"
+      : root.ringing ? "Someone rang at " + Qt.formatTime(new Date(root.ringAtMs), "HH:mm")
       : (root.sensor ? "Door " + (root.sensor.isOpened ? "open" : "closed") : (root.camera ? root.camera.name : "Door camera")))
     onPressed: function(buttonCode) { root.handlePress(buttonCode) }
   }
@@ -298,6 +364,7 @@ Panel {
         else if (key === "s") root.runSetup()
         else if (key === "a") root.runAccessSetup()
         else if (key === "u") root.pressUnlock()
+        else if (key === "b") root.runRingSetup()
       }
 
       Column {
@@ -471,6 +538,16 @@ Panel {
             fontFamily: root.fontFamily
             onClicked: root.runAccessSetup()
           }
+        }
+
+        Text {
+          width: parent.width
+          textFormat: Text.PlainText
+          text: "󰂞  " + root.ringText()
+          color: root.ringing || (root.ringError && !root.ringNeedsSetup) ? root.urgent : root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          elide: Text.ElideRight
         }
       }
     }

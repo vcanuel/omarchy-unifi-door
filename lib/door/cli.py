@@ -13,7 +13,7 @@ from unifi import config, connect
 from unifi.errors import UnifiError
 from unifi.transport import fetch_fingerprint, split_url
 
-from . import access, protect
+from . import access, protect, ring
 
 
 def _print(data):
@@ -69,14 +69,19 @@ def cmd_sensor(args):
     return 0
 
 
+def save_snapshot(transport, endpoint, camera_id, name=None):
+    data = protect.fetch_snapshot(transport, endpoint, camera_id)
+    if not data.startswith(b"\xff\xd8"):
+        raise UnifiError("parse", "Protect did not return a JPEG")
+    path = os.path.join(snapshot_dir(), "%s.jpg" % (name or "".join(ch for ch in camera_id if ch.isalnum())))
+    write_atomic(path, data)
+    return path, data
+
+
 def cmd_snapshot(args):
     _, endpoint, transport = unifi_cli._connect_or_fail(args.profile)
     started = time.time()
-    data = protect.fetch_snapshot(transport, endpoint, args.camera)
-    if not data.startswith(b"\xff\xd8"):
-        raise UnifiError("parse", "Protect did not return a JPEG")
-    path = os.path.join(snapshot_dir(), "%s.jpg" % "".join(ch for ch in args.camera if ch.isalnum()))
-    write_atomic(path, data)
+    path, data = save_snapshot(transport, endpoint, args.camera)
     _print({"ok": True, "path": path, "bytes": len(data), "ms": int((time.time() - started) * 1000),
             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
     return 0
@@ -160,6 +165,64 @@ def cmd_access_setup(args):
     return 0
 
 
+RING_HELP = """The doorbell reaches this widget anywhere through ntfy: the console posts to a
+private topic when someone rings, and the widget listens to that topic.
+
+In UniFi Protect → Alarm Manager → Create Alarm:
+  • Trigger:  Doorbell Ring (or "Ring"), on the door camera
+  • Action:   Webhook → Custom webhook, method POST, to the URL below
+"""
+
+
+def cmd_ring_setup(args):
+    try:
+        current = ring.get_ring(args.profile)
+    except UnifiError:
+        current = {}
+    if current and unifi_cli._confirm("Keep the current topic (the alarm in Protect already uses it)?"):
+        settings = current
+    else:
+        server = unifi_cli._ask("ntfy server", current.get("server") or ring.DEFAULT_SERVER).rstrip("/")
+        settings = {"server": server, "topic": ring.new_topic()}
+        ring.save_ring(args.profile, **settings)
+    print("\n" + RING_HELP)
+    print("  %s\n" % ring.topic_url(settings))
+    print("Phone too: subscribe to the same topic in the ntfy app.")
+    if unifi_cli._confirm("Send a test ring now?"):
+        ring.publish(settings, "Test ring from unifi-door")
+        print("Sent. The bar should ring within a second.")
+    return 0
+
+
+def cmd_ring_test(args):
+    ring.publish(ring.get_ring(args.profile), "Test ring from unifi-door")
+    _print({"ok": True})
+    return 0
+
+
+def _emit(data):
+    print(json.dumps(data), flush=True)
+
+
+def cmd_ring_listen(args):
+    """Stream one JSON line per ring, forever, reconnecting with backoff."""
+    settings = ring.get_ring(args.profile)
+    last_id = None
+    delay = 2
+    while True:
+        try:
+            _emit({"ok": True, "event": "listening"})
+            for event in ring.stream(settings, since=last_id):
+                last_id = event["id"]
+                delay = 2
+                if ring.is_fresh(event):
+                    _emit({"ok": True, "event": "ring", "at": event["time"], "message": event["message"][:200]})
+        except UnifiError as exc:
+            _emit({"ok": False, "event": "error", "error": exc.to_json()})
+        time.sleep(delay)
+        delay = min(delay * 2, 60)
+
+
 def cmd_setup(args):
     # Same profiles and keyring as the vcanuel.unifi plugin: one setup serves both.
     return unifi_cli.main(["--profile", args.profile, "setup"])
@@ -195,6 +258,15 @@ def main(argv=None):
 
     access_setup = sub.add_parser("access-setup", help="connect to UniFi Access on the console (LAN or VPN)")
     access_setup.set_defaults(func=cmd_access_setup)
+
+    ring_setup = sub.add_parser("ring-setup", help="hear the doorbell anywhere (UniFi Protect → ntfy)")
+    ring_setup.set_defaults(func=cmd_ring_setup)
+
+    ring_test = sub.add_parser("ring-test", help="ring the widget as the console would")
+    ring_test.set_defaults(func=cmd_ring_test)
+
+    ring_listen = sub.add_parser("ring-listen", help="print one JSON line per ring, forever")
+    ring_listen.set_defaults(func=cmd_ring_listen)
 
     args = parser.parse_args(argv)
     try:

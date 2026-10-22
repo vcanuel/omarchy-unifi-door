@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "vcanuel.unifi-door",
   "name": "UniFi Door",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Vincent Canuel",
   "license": "MIT",
   "description": "See who is at the door and let them in: the UniFi Protect camera watching it and the UniFi Access door, from the Omarchy bar.",

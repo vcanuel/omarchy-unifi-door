@@ -47,14 +47,35 @@ working either way.
    It asks for the console address, shows Access's certificate to pin, and
    stores the token in your keyring.
 
+### The doorbell, anywhere
+
+Protect's live event stream is not relayed by the UniFi cloud, so the
+console tells the widget instead: an Alarm Manager rule posts to a private
+[ntfy](https://ntfy.sh) topic when someone rings, and the widget keeps a
+subscription to that topic open. Both only make outgoing connections, so it
+works on any network, without a VPN.
+
+1. Press **b** in the panel, or run
+   `~/.config/omarchy/plugins/vcanuel.unifi-door/bin/unifi-door ring-setup`.
+   It creates a random topic and prints its URL.
+2. In **UniFi Protect → Alarm Manager**, create an alarm: trigger **Doorbell
+   Ring** on the door camera, action **Webhook** (custom, POST) to that URL.
+
+On a ring the bar icon turns into a ringing bell and a notification pops up;
+click it to open the panel and see the camera live.
+`unifi-door ring-test` rings as the console would. The topic name is the
+only secret (anyone who knows it can read and post to it); it lives in
+`~/.config/omarchy-unifi-door/config.json`. Subscribe to the same topic in
+the ntfy phone app to hear the doorbell there too.
+
 ## Use
 
 - **Click**: open the camera. **Middle click**: fetch a new picture now.
 - **Open** unlocks the door, in two steps: the first press arms the button for
   four seconds ("Click again"), the second one unlocks. The lock closes again
   by itself after the delay set in Access. Nothing else ever unlocks.
-- In the panel: **r** refreshes, **u u** unlocks, **s** runs setup, **a** sets
-  up Access, **Esc** closes.
+- In the panel: **r** refreshes, **u u** unlocks, **s** runs setup, **b** sets
+  up the doorbell, **a** sets up Access, **Esc** closes.
 - Settings: `camera` picks a camera by name or id (empty means the first door
   camera: Entry, Doorbell or Intercom models), `door` picks the Access door
   (empty means the first one wired to a hub), `sensor` picks the Protect
