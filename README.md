@@ -74,6 +74,11 @@ the ntfy phone app to hear the doorbell there too.
 - **Open** unlocks the door, in two steps: the first press arms the button for
   four seconds ("Click again"), the second one unlocks. The lock closes again
   by itself after the delay set in Access. Nothing else ever unlocks.
+- Below the door, the last three openings from Access's system log: who,
+  how (Face, Card, PIN, Phone, Remote…) and when, with refused attempts in red.
+  This is what the token's **System Log: View** right is for. The controller
+  can report one opening twice; copies sharing the same time, result,
+  credential, person and door are shown once.
 - In the panel: **r** refreshes, **u u** unlocks, **s** runs setup, **b** sets
   up the doorbell, **a** sets up Access, **Esc** closes.
 - Settings: `camera` picks a camera by name or id (empty means the first door

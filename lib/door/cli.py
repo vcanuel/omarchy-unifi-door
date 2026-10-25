@@ -107,6 +107,12 @@ def cmd_unlock(args):
     return 0
 
 
+def cmd_history(args):
+    client = access.AccessClient.for_profile(args.profile)
+    _print({"ok": True, "openings": client.openings(args.door, args.limit)})
+    return 0
+
+
 ACCESS_HELP = """UniFi Access is reached on the console itself (port %d), not through the
 UniFi cloud: on the office network, or over a VPN to it.
 
@@ -255,6 +261,11 @@ def main(argv=None):
     unlock = sub.add_parser("unlock", help="unlock a door now (UniFi Access)")
     unlock.add_argument("--door", required=True, help="door id")
     unlock.set_defaults(func=cmd_unlock)
+
+    history = sub.add_parser("history", help="print the door's latest openings (UniFi Access system log)")
+    history.add_argument("--door", default="", help="door id (default: every door)")
+    history.add_argument("--limit", type=int, default=5, help="how many (default: %(default)s)")
+    history.set_defaults(func=cmd_history)
 
     access_setup = sub.add_parser("access-setup", help="connect to UniFi Access on the console (LAN or VPN)")
     access_setup.set_defaults(func=cmd_access_setup)

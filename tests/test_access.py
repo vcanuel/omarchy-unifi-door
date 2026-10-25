@@ -109,5 +109,61 @@ class Envelope(unittest.TestCase):
         self.assertNotIn("secret-token", caught.exception.message)
 
 
+def raw_opening(id="", at=1729850000000, who="Vincent", provider="FACE", result="ACCESS",
+                door_id="d1", actor_id="u1", issuer="i1"):
+    # Shape of a hit from POST /api/v1/developer/system/logs (topic door_openings).
+    return {"@timestamp": "2026-10-25T10:00:00Z", "_id": id, "tag": "access", "_source": {
+        "actor": {"display_name": who, "id": actor_id, "type": "user"},
+        "authentication": {"credential_provider": provider, "issuer": issuer},
+        "event": {"type": "access.door.unlock", "result": result, "published": at, "display_message": ""},
+        "target": [{"type": "UAH", "id": "hub", "display_name": "UA-HUB"},
+                   {"type": "door", "id": door_id, "display_name": "Porte"}]}}
+
+
+class Openings(unittest.TestCase):
+    def test_normalize(self):
+        opening = access.recent_openings([raw_opening(id="e1")])[0]
+        self.assertEqual(opening, {"id": "e1", "at": 1729850000000, "who": "Vincent", "method": "Face",
+                                   "granted": True, "doorId": "d1", "door": "Porte"})
+
+    def test_unknown_person_and_method(self):
+        opening = access.recent_openings([raw_opening(who="N/A", provider="SOME_NEW_THING", result="BLOCKED")])[0]
+        self.assertEqual((opening["who"], opening["method"], opening["granted"]), ("", "Some New Thing", False))
+
+    def test_newest_first_and_limit(self):
+        hits = [raw_opening(at=1000 * i, actor_id="u%d" % i) for i in range(1, 8)]
+        openings = access.recent_openings(hits, limit=3)
+        self.assertEqual([o["at"] for o in openings], [7000, 6000, 5000])
+
+    def test_other_doors_filtered(self):
+        hits = [raw_opening(door_id="d1"), raw_opening(door_id="d2", at=2)]
+        self.assertEqual([o["doorId"] for o in access.recent_openings(hits, "d1")], ["d1"])
+
+    def test_same_event_twice_kept_once(self):
+        # The controller can report one opening twice; only the shared fields match.
+        hits = [raw_opening(id="a"), raw_opening(id="b"), raw_opening(id="a")]
+        self.assertEqual(len(access.recent_openings(hits)), 1)
+
+    def test_distinct_events_same_moment_kept(self):
+        hits = [raw_opening(actor_id="u1"), raw_opening(actor_id="u2"), raw_opening(door_id="d2"),
+                raw_opening(issuer="i2"), raw_opening(result="BLOCKED")]
+        self.assertEqual(len(access.recent_openings(hits, limit=10)), 5)
+
+    def test_without_timestamp_skipped(self):
+        self.assertEqual(access.recent_openings([raw_opening(at=None), "junk"]), [])
+
+    def test_request(self):
+        client = client_with(200, {"code": "SUCCESS", "msg": "success", "data": {"hits": [raw_opening()]}})
+        self.assertEqual(len(client.openings("d1")), 1)
+        method, path, headers, body = client.transport.calls[0]
+        self.assertEqual(method, "POST")
+        self.assertTrue(path.startswith("/api/v1/developer/system/logs?"))
+        self.assertEqual(json.loads(body)["topic"], "door_openings")
+
+    def test_empty_log(self):
+        client = client_with(200, {"code": "SUCCESS", "msg": "success", "data": {"hits": None}})
+        self.assertEqual(client.openings(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

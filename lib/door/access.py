@@ -14,6 +14,7 @@ Every answer is an envelope: {"code": "SUCCESS", "data": ..., "msg": ...}.
 import json
 import os
 import subprocess
+import time
 
 from unifi.errors import UnifiError
 from unifi.transport import Transport
@@ -135,6 +136,14 @@ class AccessClient:
     def unlock(self, door_id):
         self.call("PUT", "/doors/%s/unlock" % door_id, {})
 
+    def openings(self, door_id="", limit=5, days=7):
+        """The door's latest openings and refusals from the system log, newest first."""
+        since = int(time.time()) - days * 86400
+        data = self.call("POST", "/system/logs?page_num=1&page_size=%d" % HISTORY_PAGE,
+                         {"topic": "door_openings", "since": since})
+        hits = data.get("hits") if isinstance(data, dict) else None
+        return recent_openings(hits or [], door_id, limit)
+
 
 def normalize_door(raw):
     position = raw.get("door_position_status")
@@ -147,6 +156,74 @@ def normalize_door(raw):
         "position": {"open": "open", "close": "closed"}.get(position, ""),
         "hasHub": bool(raw.get("is_bind_hub")),
     }
+
+
+HISTORY_PAGE = 50
+
+# authentication.credential_provider → what the panel says.
+METHODS = {
+    "NFC": "Card",
+    "PIN_CODE": "PIN",
+    "FACE": "Face",
+    "MOBILE_TAP": "Phone",
+    "MOBILE_BUTTON": "Phone",
+    "TOUCH_PASS": "Touch Pass",
+    "QR_CODE": "QR code",
+    "WAVE": "Wave",
+    "REMOTE_THROUGH_UAH": "Remote",
+    "LICENSE_PLATE": "Plate",
+}
+
+
+def _door_target(source):
+    for target in source.get("target") or []:
+        if isinstance(target, dict) and target.get("type") == "door":
+            return target
+    return {}
+
+
+def normalize_opening(hit):
+    source = hit.get("_source") if isinstance(hit.get("_source"), dict) else {}
+    event = source.get("event") or {}
+    actor = source.get("actor") or {}
+    auth = source.get("authentication") or {}
+    door = _door_target(source)
+    published = event.get("published")
+    at = int(published) if isinstance(published, (int, float)) and published > 0 else 0
+    provider = str(auth.get("credential_provider") or "")
+    name = str(actor.get("display_name") or "")
+    return {
+        "id": str(hit.get("_id") or ""),
+        "at": at,  # milliseconds since the epoch
+        "who": "" if name in ("", "N/A") else name,
+        "method": METHODS.get(provider, provider.replace("_", " ").title()),
+        "granted": event.get("result") == "ACCESS",
+        "doorId": str(door.get("id") or ""),
+        "door": str(door.get("display_name") or ""),
+        # Fields both copies of one event share, like Home Assistant's fix
+        # for the controller reporting each opening twice (core#185160).
+        "_key": (at, event.get("result"), str(auth.get("issuer") or ""),
+                 str(actor.get("id") or ""), str(door.get("id") or "")),
+    }
+
+
+def recent_openings(hits, door_id="", limit=5):
+    seen, openings = set(), []
+    for hit in hits:
+        if not isinstance(hit, dict):
+            continue
+        opening = normalize_opening(hit)
+        key = opening.pop("_key")
+        if not opening["at"] or (door_id and opening["doorId"] and opening["doorId"] != door_id):
+            continue
+        if key in seen or (opening["id"] and opening["id"] in seen):
+            continue
+        seen.add(key)
+        if opening["id"]:
+            seen.add(opening["id"])
+        openings.append(opening)
+    openings.sort(key=lambda o: o["at"], reverse=True)
+    return openings[:limit]
 
 
 def choose_door(doors, wanted=""):

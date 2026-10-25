@@ -51,6 +51,10 @@ Panel {
   readonly property bool ringing: ringAtMs > 0
   readonly property bool ringNeedsSetup: !!ringError && ringError.kind === "unconfigured"
   readonly property string icon: ringing ? "󰂞" : (doorOpen ? "󰠜" : "󰠚")
+  // Latest openings from Access's system log, fetched with the door's state
+  // but at most every 15 seconds.
+  property var openings: []
+  property double openingsAtMs: 0
 
   function helper(args) {
     return [helperPath, "--profile", profile].concat(args)
@@ -129,6 +133,28 @@ Panel {
     return ringProcess.running ? "Doorbell on, anywhere" : "Doorbell…"
   }
 
+  function refreshOpenings(force) {
+    if (!door || historyProcess.running) return
+    if (!force && Date.now() - openingsAtMs < 15000) return
+    historyProcess.command = helper(["history", "--door", door.id, "--limit", "3"])
+    historyProcess.running = true
+  }
+
+  function whenText(atMs) {
+    var s = Math.max(0, Math.round((nowMs - atMs) / 1000))
+    if (s < 60) return "just now"
+    if (s < 3600) return Math.floor(s / 60) + " min ago"
+    var at = new Date(atMs)
+    var time = Qt.formatTime(at, "HH:mm")
+    if (at.toDateString() === new Date(nowMs).toDateString()) return time
+    return Qt.formatDate(at, "ddd") + " " + time
+  }
+
+  function openingText(opening) {
+    var who = opening.who !== "" ? opening.who : (opening.granted ? "Someone" : "Unknown")
+    return (opening.granted ? "" : "Refused · ") + who + (opening.method !== "" ? " · " + opening.method : "")
+  }
+
   function refreshSensor() {
     if (sensorProcess.running) return
     sensorProcess.command = helper(["sensor", "--sensor", wantedSensor])
@@ -186,7 +212,7 @@ Panel {
   }
 
   onWantedCameraChanged: { camera = null; if (opened) findCamera() }
-  onWantedDoorChanged: { door = null; if (opened) refreshDoor() }
+  onWantedDoorChanged: { door = null; openings = []; openingsAtMs = 0; if (opened) refreshDoor() }
   onProfileChanged: { camera = null; if (opened) findCamera() }
   onOpenedChanged: if (opened) { nowMs = Date.now(); takePicture(); refreshDoor(); refreshSensor() } else { armed = false; ringAtMs = 0 }
   onWantedSensorChanged: { sensor = null; refreshSensor() }
@@ -206,7 +232,7 @@ Panel {
     }
     function status(): string {
       return JSON.stringify({ opened: root.opened, camera: root.camera, via: root.via, error: root.error,
-        door: root.door, doorError: root.doorError, armed: root.armed, sensor: root.sensor,
+        door: root.door, doorError: root.doorError, openings: root.openings, armed: root.armed, sensor: root.sensor,
         ringing: root.ringing, ringError: root.ringError, listening: ringProcess.running,
         finding: cameraProcess.running, fetching: snapshotProcess.running, frame: root.frame })
     }
@@ -248,8 +274,20 @@ Panel {
     stdout: StdioCollector { id: doorsOut; waitForEnd: true }
     onExited: {
       var result = root.parse(doorsOut.text)
-      if (result && result.ok) { root.door = result.door; root.doorError = null }
+      if (result && result.ok) { root.door = result.door; root.doorError = null; if (root.opened) root.refreshOpenings(false) }
       else root.doorError = result && result.error ? result.error : { kind: "http", message: "unifi-door helper failed" }
+    }
+  }
+
+  // History is a nice-to-have: a failure keeps the last list, and the door
+  // line already says when Access is unreachable.
+  Process {
+    id: historyProcess
+    stdout: StdioCollector { id: historyOut; waitForEnd: true }
+    onExited: {
+      var result = root.parse(historyOut.text)
+      root.openingsAtMs = Date.now()
+      if (result && result.ok) root.openings = result.openings || []
     }
   }
 
@@ -303,6 +341,7 @@ Panel {
       if (result && result.ok) root.doorFlash = "Unlocked"
       else root.doorFlash = result && result.error ? result.error.message : "Unlock failed"
       flashTimer.restart()
+      root.openingsAtMs = 0
       root.refreshDoor()
     }
   }
@@ -360,7 +399,7 @@ Panel {
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
         var key = t.toLowerCase()
-        if (key === "r") { root.takePicture(); root.refreshDoor() }
+        if (key === "r") { root.takePicture(); root.openingsAtMs = 0; root.refreshDoor() }
         else if (key === "s") root.runSetup()
         else if (key === "a") root.runAccessSetup()
         else if (key === "u") root.pressUnlock()
@@ -540,6 +579,44 @@ Panel {
           }
         }
 
+        // Who came in lately, newest first.
+        Column {
+          width: parent.width
+          spacing: Style.space(2)
+          visible: root.openings.length > 0 && !root.doorError
+
+          Repeater {
+            model: root.openings
+            delegate: Item {
+              required property var modelData
+              width: parent.width
+              height: Math.max(whoText.implicitHeight, whenLabel.implicitHeight)
+
+              Text {
+                id: whoText
+                anchors.left: parent.left
+                anchors.right: whenLabel.left
+                anchors.rightMargin: Style.space(8)
+                textFormat: Text.PlainText
+                text: root.openingText(modelData)
+                color: modelData.granted ? root.dim : root.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
+              }
+              Text {
+                id: whenLabel
+                anchors.right: parent.right
+                textFormat: Text.PlainText
+                text: root.whenText(modelData.at)
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+          }
+        }
+
         Text {
           width: parent.width
           textFormat: Text.PlainText
@@ -549,6 +626,7 @@ Panel {
           font.pixelSize: Style.font.caption
           elide: Text.ElideRight
         }
+
       }
     }
   }
